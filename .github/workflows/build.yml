@@ -1,0 +1,36 @@
+name: Build ICS
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # aggiorna ogni 30 minuti
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm i
+      - run: npx playwright install --with-deps chromium
+      - name: Run scraper
+        env:
+          USERNAME: ${{ secrets.USERNAME }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+        run: npm run scrape
+      - name: Prepare Pages artifact
+        run: |
+          mkdir -p public
+          cp calendar.ics public/calendar.ics
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
