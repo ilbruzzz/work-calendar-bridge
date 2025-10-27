@@ -1,0 +1,12 @@
+{
+  "name": "work-calendar-bridge",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "scrape": "node scrape_to_ics.js"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0",
+    "luxon": "^3.5.0"
+  }
+}
