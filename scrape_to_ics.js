@@ -2,9 +2,9 @@ import { chromium } from "playwright";
 import fs from "fs";
 import { DateTime } from "luxon";
 
-// ====== CONFIG ======
-const LOGIN_URL = "https://itsar.registrodiclasse.it/geopcfp2/";
-const CAL_URL   = "https://itsar.registrodiclasse.it/geopcfp2/";
+// CONFIGURAZIONE URL
+const LOGIN_URL  = "https://itsar.registrodiclasse.it/geopcfp2/";
+const CAL_URL    = "https://itsar.registrodiclasse.it/geopcfp2/";
 const USER_SEL   = 'input[name="username"]';
 const PASS_SEL   = 'input[name="password"]';
 const SUBMIT_SEL = 'input[type="submit"]';
@@ -12,37 +12,59 @@ const SUBMIT_SEL = 'input[type="submit"]';
 const TZ = "Europe/Rome";
 const MONTHS_AHEAD = 8;
 
-const NEXT_BTN_SEL   = ".fc-next-button, .fc-next, button.next, .paginator-next";
-const TODAY_BTN_SEL  = ".fc-today-button";
+const NEXT_BTN_SEL  = ".fc-next-button, .fc-next, button.next, .paginator-next";
+const TODAY_BTN_SEL = ".fc-today-button";
 
 const EVENT_SELECTORS = [
-  ".fc-timegrid-event",   // eventi a griglia oraria (settimana/giorno)
-  ".fc-daygrid-event",    // eventi nella vista mese
+  ".fc-timegrid-event", 
+  ".fc-daygrid-event",  
   ".fc-event", ".fc-v-event", ".fc-event-main", ".evento"
 ];
 
-const DEBUG = true;      // se 0 eventi, salva screenshot+html per capire cosa vede il bot
-// =====================
+// esclusione keyword per provare a bypassare la creazione di eventi vuoti
+const EXCLUDE_KEYWORDS = ["vacanz", "festivit", "sospensione", "chiusur", "ponte", "pasqua", "natale"];
 
-// ---------- Utils ----------
+
 function cleanText(s){
   return (s||"").replace(/<br\s*\/?>/gi," ")
                  .replace(/&nbsp;/gi," ")
+                 .replace(/[\u200B-\u200D\uFEFF]/g, "") 
                  .replace(/\s+/g," ")
                  .trim();
 }
+
+function isValidEvent(title) {
+  if (!title || title.length < 2) return false;
+  const t = title.toLowerCase();
+  if (EXCLUDE_KEYWORDS.some(kw => t.includes(kw))) return false;
+  return true;
+}
+
 function parseWhen(s){
   if (!s) return null;
-  // normalizza "YYYY-MM-DD HH:mm"
   s = s.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(?::\d{2})?)$/,'$1T$2');
   const hasOffset = /[zZ]|[+-]\d\d:?\d\d$/.test(s);
   if (hasOffset) return DateTime.fromISO(s,{ setZone:true }).setZone(TZ);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) { const d=DateTime.fromISO(s,{zone:TZ}).startOf("day"); d.isAllDay = true; return d; }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) { 
+    const d = DateTime.fromISO(s,{zone:TZ}).startOf("day"); 
+    d.isAllDay = true; 
+    return d; 
+  }
   return DateTime.fromISO(s,{ zone:TZ });
 }
-function fmtLocal(dt){ const p=n=>String(n).padStart(2,"0"); return dt.year+p(dt.month)+p(dt.day)+"T"+p(dt.hour)+p(dt.minute)+p(dt.second); }
-function icsDateLine(prop, dt){ return dt.isAllDay ? `${prop};VALUE=DATE:${dt.toFormat("yyyyLLdd")}` : `${prop};TZID=${TZ}:${fmtLocal(dt)}`; }
-function esc(s){ return String(s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n"); }
+
+function fmtLocal(dt){ 
+  const p = n => String(n).padStart(2,"0"); 
+  return dt.year+p(dt.month)+p(dt.day)+"T"+p(dt.hour)+p(dt.minute)+p(dt.second); 
+}
+
+function icsDateLine(prop, dt){ 
+  return dt.isAllDay ? `${prop};VALUE=DATE:${dt.toFormat("yyyyLLdd")}` : `${prop};TZID=${TZ}:${fmtLocal(dt)}`; 
+}
+
+function esc(s){ 
+  return String(s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n"); 
+}
 
 const VTIMEZONE = [
   "BEGIN:VTIMEZONE","TZID:Europe/Rome","X-LIC-LOCATION:Europe/Rome",
@@ -63,9 +85,12 @@ function buildICS(events){
     VTIMEZONE
   ];
   const dtstampStr = DateTime.now().setZone(TZ).toUTC().toFormat("yyyyLLdd'T'HHmmss'Z'");
+  
   for (const ev of events){
     if (!ev?.start) continue;
-    const title = cleanText(ev.title || "Evento"); if (!title) continue;
+    const title = cleanText(ev.title || "Evento"); 
+    if (!title) continue;
+    
     const uid = esc(ev.id || (`${ev.start.toISO()}-${title}`));
     lines.push("BEGIN:VEVENT");
     lines.push(`UID:${uid}`);
@@ -81,7 +106,6 @@ function buildICS(events){
   return lines.join("\r\n");
 }
 
-// ---------- Playwright ----------
 async function login(page){
   await page.goto(LOGIN_URL,{ waitUntil:"domcontentloaded" });
   await page.waitForSelector(USER_SEL,{ timeout:20000 });
@@ -100,7 +124,6 @@ async function safeClick(page, sel){
   return true;
 }
 
-// ---------- XHR first (se esiste endpoint) ----------
 function extractRangeFromURL(u){
   try{
     const url = new URL(u);
@@ -109,6 +132,7 @@ function extractRangeFromURL(u){
     return { url, start, end };
   }catch{ return null; }
 }
+
 async function collectViaXHR(page, fromDT, toDT){
   const results = []; const seen = new Set(); const endpoints = new Set();
   const MATCH = /events|calendar|getEvents|agenda|lesson|schedule|orario|fullcalendar|fc/i;
@@ -117,10 +141,13 @@ async function collectViaXHR(page, fromDT, toDT){
     const title = cleanText(it.title ?? it.name ?? "");
     const start = it.start ? parseWhen(it.start) : null;
     const end   = it.end   ? parseWhen(it.end)   : null;
-    if (!title || !start) return;
+    
+    if (!start || !isValidEvent(title)) return;
     if (start < fromDT || start > toDT) return;
+    
     const key = `${it.id ?? ""}|${start.toISO()}|${title}`;
     if (seen.has(key)) return; seen.add(key);
+    
     results.push({ id: it.id ?? null, title, start, end, location: it.location ?? "", description: it.description ?? "" });
   }
 
@@ -145,13 +172,12 @@ async function collectViaXHR(page, fromDT, toDT){
     }catch{}
   });
 
-  // naviga per generare almeno una chiamata
   await page.goto(CAL_URL, { waitUntil:"networkidle" });
   await page.waitForSelector('.fc, .calendar, [data-calendar]', { timeout: 20000 }).catch(()=>{});
-  await safeClick(page, NEXT_BTN_SEL); await safeClick(page, TODAY_BTN_SEL);
+  await safeClick(page, NEXT_BTN_SEL); 
+  await safeClick(page, TODAY_BTN_SEL);
   await page.waitForTimeout(1000);
 
-  // se abbiamo endpoint, richiamiamolo mese per mese
   for (const base of endpoints){
     let cursor = fromDT.startOf("month");
     while (cursor <= toDT){
@@ -174,16 +200,13 @@ async function collectViaXHR(page, fromDT, toDT){
   return results;
 }
 
-// ---------- DOM fallback “smart” ----------
 async function grabDOM(page){
-  // Estraggo info usando tanti fallback:
   const sels = EVENT_SELECTORS.join(",");
   return await page.$$eval(sels, nodes => nodes.map(el => {
     const title = (el.innerText || el.textContent || "").trim();
     const ds    = el.getAttribute("data-start") || el.dataset?.start || "";
     const de    = el.getAttribute("data-end")   || el.dataset?.end   || "";
     const aria  = el.getAttribute("aria-label") || "";
-    // trova data del giorno salendo ai parent con data-date
     const dayEl = el.closest("[data-date]") || el.parentElement?.closest?.("[data-date]");
     const day   = dayEl?.getAttribute?.("data-date") || "";
 
@@ -197,11 +220,9 @@ async function grabDOM(page){
 }
 
 function parseDomEvent(e){
-  // 1) se c'è data-start/data-end -> usali
   let start = e.dataStart ? parseWhen(e.dataStart) : null;
   let end   = e.dataEnd   ? parseWhen(e.dataEnd)   : null;
 
-  // 2) se manca, prova dall'aria-label: “…, 08:40 — 12:40” o “08:40 - 12:40”
   if (!start && e.aria) {
     const m = e.aria.match(/(\d{1,2}:\d{2}).{0,5}(\d{1,2}:\d{2})/);
     if (m && e.day){
@@ -210,7 +231,6 @@ function parseDomEvent(e){
       end   = parseWhen(`${e.day} ${s2}`);
     }
   }
-  // 3) se ancora niente ma ho il giorno -> all-day
   if (!start && e.day){
     start = parseWhen(e.day);
   }
@@ -222,10 +242,13 @@ function mapFilterDom(raw, from, to, seen){
   for (const e of raw){
     const { start, end } = parseDomEvent(e);
     const title = cleanText(e.title);
-    if (!start || !title) continue;
+    
+    if (!start || !isValidEvent(title)) continue;
     if (start < from || start > to) continue;
+    
     const key = `${e.id||""}|${start.toISO()}|${title}`;
     if (seen.has(key)) continue; seen.add(key);
+    
     out.push({
       id: e.id || null,
       title,
@@ -248,7 +271,7 @@ async function collectViaDOMWithClicks(page, from, to, clicks=400){
   }
 
   await grabAndPush();
-  for (let i=0;i<clicks;i++){
+  for (let i=0; i<clicks; i++){
     await safeClick(page, NEXT_BTN_SEL);
     await grabAndPush();
   }
@@ -256,45 +279,45 @@ async function collectViaDOMWithClicks(page, from, to, clicks=400){
   return results;
 }
 
-// ---------- MAIN ----------
+// main
 (async ()=>{
-  const browser = await chromium.launch({ headless:true });
-  const page = await browser.newPage();
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
 
-  await login(page);
+    await login(page);
 
-  const now = DateTime.now().setZone(TZ);
-  const from = now.startOf("day");
-  const to   = now.plus({ months: MONTHS_AHEAD }).endOf("day");
+    const now = DateTime.now().setZone(TZ);
+    const from = now.startOf("day");
+    const to   = now.plus({ months: MONTHS_AHEAD }).endOf("day");
 
-  // 1) prova XHR “intelligente”
-  let events = await collectViaXHR(page, from, to);
+    let events = await collectViaXHR(page, from, to);
 
-  // 2) se nullo o troppo poco, fai DOM scraping con 400 click avanti
-  if (events.length < 5) {
-    await page.goto(CAL_URL, { waitUntil:"networkidle" });
-    await page.waitForSelector('.fc, .calendar, [data-date]', { timeout: 20000 }).catch(()=>{});
-    const domEv = await collectViaDOMWithClicks(page, from, to, 400);
-    // dedup
-    const seen = new Set(); const merged = [];
-    for (const ev of [...events, ...domEv]) {
-      const key = `${ev.title}|${ev.start?.toISO()}|${ev.end?.toISO()||""}`;
-      if (!seen.has(key)) { seen.add(key); merged.push(ev); }
+    // Fallback sul DOM solo se strettamente necessario
+    if (events.length < 5) {
+      await page.goto(CAL_URL, { waitUntil:"networkidle" });
+      await page.waitForSelector('.fc, .calendar, [data-date]', { timeout: 20000 }).catch(()=>{});
+      const domEv = await collectViaDOMWithClicks(page, from, to, 400);
+      
+      const seen = new Set(); const merged = [];
+      for (const ev of [...events, ...domEv]) {
+        const key = `${ev.title}|${ev.start?.toISO()}|${ev.end?.toISO()||""}`;
+        if (!seen.has(key)) { seen.add(key); merged.push(ev); }
+      }
+      events = merged;
     }
-    events = merged;
+
+    const ics = buildICS(events);
+    fs.writeFileSync("calendar.ics", ics, "utf8");
+    
+    // Log essenziale per il sistema di orchestrazione
+    console.log(`[SUCCESS] Extracted ${events.length} events.`);
+
+  } catch (err) {
+    console.error(`[ERROR] Script failed: ${err.message}`);
+    process.exit(1);
+  } finally {
+    if (browser) await browser.close();
   }
-
-  if (!events.length && DEBUG){
-    // salva screenshot e html per capire perché non vede eventi
-    await page.screenshot({ path: "debug_screenshot.png", fullPage:true }).catch(()=>{});
-    const html = await page.content().catch(()=> "");
-    fs.writeFileSync("debug_page.html", html, "utf8");
-  }
-
-  const ics = buildICS(events);
-  fs.writeFileSync("calendar.ics","utf8");
-  fs.writeFileSync("calendar.ics", ics, "utf8");
-  console.log(`OK: estratti ${events.length} eventi → calendar.ics`);
-
-  await browser.close();
 })();
