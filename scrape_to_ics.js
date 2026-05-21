@@ -22,8 +22,17 @@ const EVENT_SELECTORS = [
 ];
 
 // esclusione keyword per provare a bypassare la creazione di eventi vuoti
-const EXCLUDE_KEYWORDS = ["vacanz", "festivit", "sospensione", "chiusur", "ponte", "pasqua", "natale"];
-
+const EXCLUDE_KEYWORDS = [
+  "vacanz", "festivit", "sospensione", "chiusur", "ponte", "pasqua", "natale", 
+  "capodanno", "epifania", "ognissanti", "immacolata", "liberazione", "repubblica", 
+  "patrono", "santo patrono",
+  "annullat", "cancellat", "sospes", "rinviat", "rimandat", "saltata", "non si terrà",
+  "assemblea", "collegio", "consiglio", "scrutini", "elezioni", "open day", 
+  "orientamento", "formazione docenti",
+  "- []", "- [ ]", "[]", "[ ]", "da definire", "da assegnare", "tbd", "n.d.", "nd", 
+  "nessuno", "vuoto", "nessuna lezione", "lezione vuota", "non assegnato",
+  "---", "..."
+];
 
 function cleanText(s){
   return (s||"").replace(/<br\s*\/?>/gi," ")
