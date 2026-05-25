@@ -5,14 +5,14 @@ import { DateTime } from "luxon";
 // CONFIGURAZIONE URL
 const LOGIN_URL  = "https://itsar.registrodiclasse.it/geopcfp2/";
 const CAL_URL    = "https://itsar.registrodiclasse.it/geopcfp2/";
-const USER_SEL   = 'input[name="username"]';
-const PASS_SEL   = 'input[name="password"]';
+const USER_SEL    = 'input[name="username"]';
+const PASS_SEL    = 'input[name="password"]';
 const SUBMIT_SEL = 'input[type="submit"]';
 
 const TZ = "Europe/Rome";
 const MONTHS_AHEAD = 8;
 
-const NEXT_BTN_SEL  = ".fc-next-button, .fc-next, button.next, .paginator-next";
+const NEXT_BTN_SEL  = ".fc-next-button, button.fc-next-button, .fc-next, button.next";
 const TODAY_BTN_SEL = ".fc-today-button";
 
 const EVENT_SELECTORS = [
@@ -129,7 +129,7 @@ async function safeClick(page, sel){
   if (!el) return false;
   await el.click().catch(()=>{});
   await page.waitForLoadState("networkidle",{ timeout:12000 }).catch(()=>{});
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(600);
   return true;
 }
 
@@ -183,7 +183,16 @@ async function collectViaXHR(page, fromDT, toDT){
 
   await page.goto(CAL_URL, { waitUntil:"networkidle" });
   await page.waitForSelector('.fc, .calendar, [data-calendar]', { timeout: 20000 }).catch(()=>{});
-  await safeClick(page, NEXT_BTN_SEL); 
+  
+  // Navigazione iterativa per forzare il caricamento dei dati futuri
+  let current = DateTime.now().setZone(TZ);
+  while (current < toDT) {
+    const ok = await safeClick(page, NEXT_BTN_SEL);
+    if (!ok) break;
+    current = current.plus({ weeks: 1 }); // O months: 1 a seconda della vista
+    await page.waitForTimeout(500);
+  }
+
   await safeClick(page, TODAY_BTN_SEL);
   await page.waitForTimeout(1000);
 
@@ -269,7 +278,7 @@ function mapFilterDom(raw, from, to, seen){
   return out;
 }
 
-async function collectViaDOMWithClicks(page, from, to, clicks=400){
+async function collectViaDOMWithClicks(page, from, to, clicks=50){
   const results = []; const seen = new Set();
 
   async function grabAndPush(){
@@ -281,7 +290,8 @@ async function collectViaDOMWithClicks(page, from, to, clicks=400){
 
   await grabAndPush();
   for (let i=0; i<clicks; i++){
-    await safeClick(page, NEXT_BTN_SEL);
+    const ok = await safeClick(page, NEXT_BTN_SEL);
+    if (!ok) break;
     await grabAndPush();
   }
   await safeClick(page, TODAY_BTN_SEL);
@@ -307,7 +317,7 @@ async function collectViaDOMWithClicks(page, from, to, clicks=400){
     if (events.length < 5) {
       await page.goto(CAL_URL, { waitUntil:"networkidle" });
       await page.waitForSelector('.fc, .calendar, [data-date]', { timeout: 20000 }).catch(()=>{});
-      const domEv = await collectViaDOMWithClicks(page, from, to, 400);
+      const domEv = await collectViaDOMWithClicks(page, from, to, 40);
       
       const seen = new Set(); const merged = [];
       for (const ev of [...events, ...domEv]) {
