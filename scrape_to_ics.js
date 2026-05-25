@@ -12,7 +12,7 @@ const SUBMIT_SEL = 'input[type="submit"]';
 const TZ = "Europe/Rome";
 const MONTHS_AHEAD = 8;
 
-const NEXT_BTN_SEL  = ".fc-next-button, button.fc-next-button, .fc-next, button.next";
+const NEXT_BTN_SEL  = "button.fc-next-button, .fc-next-button, .fc-next, button.next";
 const TODAY_BTN_SEL = ".fc-today-button";
 
 const EVENT_SELECTORS = [
@@ -45,7 +45,16 @@ function cleanText(s){
 function isValidEvent(title) {
   if (!title || title.length < 2) return false;
   const t = title.toLowerCase();
-  if (EXCLUDE_KEYWORDS.some(kw => t.includes(kw))) return false;
+  
+  for (const kw of EXCLUDE_KEYWORDS) {
+    // Evita che sottostringhe come "nd" in "Fondamenti" blocchino la lezione
+    if (kw === "nd" || kw === "tbd") {
+      const regex = new RegExp(`\\b${kw}\\b`);
+      if (regex.test(t)) return false;
+    } else {
+      if (t.includes(kw)) return false;
+    }
+  }
   return true;
 }
 
@@ -127,8 +136,19 @@ async function login(page){
 async function safeClick(page, sel){
   const el = await page.$(sel);
   if (!el) return false;
+  
+  const oldText = await page.evaluate(() => document.querySelector('.fc-toolbar-title')?.innerText);
   await el.click().catch(()=>{});
-  await page.waitForLoadState("networkidle",{ timeout:12000 }).catch(()=>{});
+  
+  try {
+    await page.waitForFunction((old) => {
+      const el = document.querySelector('.fc-toolbar-title');
+      return el && el.innerText !== old;
+    }, oldText, { timeout: 4000 });
+  } catch (e) {
+    await page.waitForLoadState("networkidle",{ timeout:5000 }).catch(()=>{});
+  }
+  
   await page.waitForTimeout(600);
   return true;
 }
@@ -184,13 +204,9 @@ async function collectViaXHR(page, fromDT, toDT){
   await page.goto(CAL_URL, { waitUntil:"networkidle" });
   await page.waitForSelector('.fc, .calendar, [data-calendar]', { timeout: 20000 }).catch(()=>{});
   
-  // Navigazione iterativa per forzare il caricamento dei dati futuri
-  let current = DateTime.now().setZone(TZ);
-  while (current < toDT) {
-    const ok = await safeClick(page, NEXT_BTN_SEL);
-    if (!ok) break;
-    current = current.plus({ weeks: 1 }); // O months: 1 a seconda della vista
-    await page.waitForTimeout(500);
+  for (let i=0; i < 12; i++) {
+    const clicked = await safeClick(page, NEXT_BTN_SEL);
+    if (!clicked) break;
   }
 
   await safeClick(page, TODAY_BTN_SEL);
@@ -278,7 +294,7 @@ function mapFilterDom(raw, from, to, seen){
   return out;
 }
 
-async function collectViaDOMWithClicks(page, from, to, clicks=50){
+async function collectViaDOMWithClicks(page, from, to, clicks=35){
   const results = []; const seen = new Set();
 
   async function grabAndPush(){
@@ -303,7 +319,8 @@ async function collectViaDOMWithClicks(page, from, to, clicks=50){
   let browser;
   try {
     browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    const context = await browser.newContext({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' });
+    const page = await context.newPage();
 
     await login(page);
 
@@ -314,18 +331,16 @@ async function collectViaDOMWithClicks(page, from, to, clicks=50){
     let events = await collectViaXHR(page, from, to);
 
     // Fallback sul DOM solo se strettamente necessario
-    if (events.length < 5) {
-      await page.goto(CAL_URL, { waitUntil:"networkidle" });
-      await page.waitForSelector('.fc, .calendar, [data-date]', { timeout: 20000 }).catch(()=>{});
-      const domEv = await collectViaDOMWithClicks(page, from, to, 40);
-      
-      const seen = new Set(); const merged = [];
-      for (const ev of [...events, ...domEv]) {
-        const key = `${ev.title}|${ev.start?.toISO()}|${ev.end?.toISO()||""}`;
-        if (!seen.has(key)) { seen.add(key); merged.push(ev); }
-      }
-      events = merged;
+    await page.goto(CAL_URL, { waitUntil:"networkidle" });
+    await page.waitForSelector('.fc, .calendar, [data-date]', { timeout: 20000 }).catch(()=>{});
+    const domEv = await collectViaDOMWithClicks(page, from, to, 35);
+    
+    const seen = new Set(); const merged = [];
+    for (const ev of [...events, ...domEv]) {
+      const key = `${ev.title}|${ev.start?.toISO()}|${ev.end?.toISO()||""}`;
+      if (!seen.has(key)) { seen.add(key); merged.push(ev); }
     }
+    events = merged;
 
     const ics = buildICS(events);
     fs.writeFileSync("calendar.ics", ics, "utf8");
